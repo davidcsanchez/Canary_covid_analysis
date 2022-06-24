@@ -1,0 +1,279 @@
+---
+title: "Trabajo Final"
+output: html_notebook
+---
+
+# Covid en Canarias
+
+## Cuestión 4
+
+Nosotros exploramos la cuestión 4 ya que nos pareció la más interesante para los datos de los que disponíamos. Para ello utilizamos diferentes librerías de R ya vistas en clase como ggplot2 o gganimate.
+
+### Importación de librerías
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(gganimate)
+library(lubridate)
+library(tidyverse)
+library(rgdal)
+library(broom)
+library(viridis)
+```
+
+### Importación de datos
+
+```{r}
+covid <- read.csv(file = "Datos/casos_covid.csv", sep = ',', header = TRUE, encoding="UTF-8")
+head(covid)
+```
+
+### Limpieza de datos
+
+Para la limpieza cambiamos los valores no  registrados por valores nulos.
+
+```{r}
+covid[covid == "SIN ESPECIFICAR"] <- NA
+covid[covid == ""] <- NA
+head(covid)
+```
+
+Luego escojemos las variables que nos interesan y transformamos las fechas con lubridate.
+
+```{r}
+covid <- covid %>%
+  select(-c(fecha_datos, municipio, sexo, grupo_edad, fecha_curado, fecha_fallecido, estado_caso)) %>%
+  rename(fecha = fecha_caso) %>%
+  mutate(fecha = dmy(fecha))
+head(covid)
+```
+
+Realizamos el conteo de casos por fecha e isla.
+
+```{r}
+covid %>% 
+  group_by(fecha, isla) %>% 
+  tally() %>%
+  rename(casos = n)-> covid
+```
+
+Agrupamos los datos según el punto crítico
+
+```{r}
+covid %>% 
+  group_by(isla) %>%
+  filter(fecha < "2021-11-15" & fecha > "2021-01-01") %>%
+  mutate(normalized = casos/max(casos)) -> pre_navidad
+covid %>% 
+  group_by(isla) %>%
+  filter(fecha > "2021-11-15") %>%
+  mutate(normalized = casos/max(casos)) -> post_navidad
+```
+
+Normalizamos el número de casos.
+
+```{r}
+covid %>% 
+  group_by(isla) %>%
+  mutate(normalized = casos/max(casos)) -> covid
+```
+
+### Gráficas
+
+En esta primera gráfica representamos con datos normalizados el número de casos por isla según el avance del tiempo a través de ggplot2.
+
+```{r fig.height=10, fig.width=12}
+my_date_format <- function()
+{
+   function(x)
+   {
+       m <- format(x,"%b")
+       y <- format(x,"%Y")
+       ifelse(duplicated(y),m,paste(m,y))
+   }
+}
+
+ggplot(data = covid, aes(x=fecha, y=normalized, color = isla))+
+  geom_line(show.legend = FALSE) +
+  facet_wrap(~isla) +
+  ylab("Tasa de Casos") +
+  xlab("Fecha") +
+  theme(
+    text = element_text(size=20),
+    plot.title=element_text(size=20, face="bold", colour="black"),
+    plot.subtitle = element_text(size = 12, colour = "black"),
+    panel.spacing = unit(2, "lines"),
+    axis.text.x=element_text(angle=35, hjust=1)) +
+  scale_x_date(date_breaks = "2 month", minor_breaks = "1 week", labels=my_date_format()) +
+  labs(caption = "Fuente: INE")
+```
+
+A continuación, modificamos los datos para obtener la suma de casos por mes e isla antes y depués de la fecha crítica:
+
+```{r}
+pre_navidad %>%
+  group_by(Period = floor_date(fecha, "month"), isla) %>%
+  mutate(casos = sum(casos)) %>%
+  select(-c(fecha))-> canarias_pre
+
+canarias_pre %>%
+  group_by(isla) %>%
+  mutate(normalized = casos/max(casos)) -> canarias_post
+```
+
+```{r}
+post_navidad %>%
+  group_by(Period = floor_date(fecha, "month"), isla) %>%
+  mutate(casos = sum(casos)) %>%
+  select(-c(fecha))-> canarias_post
+
+canarias_post %>%
+  group_by(isla) %>%
+  mutate(normalized = casos/max(casos)) -> canarias_post
+```
+
+Utilizamos el mapa del mundo de R para graficarlo:
+
+```{r}
+Islas <- map_data("world") %>%
+  filter(region == "Canary Islands") %>%
+  rename(isla = subregion) %>%
+  select(-c(region)) %>%
+  mutate(isla = str_replace(isla, "Hierro", "El Hierro")) %>%
+  mutate(isla = str_replace(isla, "Gomera", "La Gomera"))
+```
+
+Creamos un dataframe por gráfica:
+
+```{r}
+canarias_pre <- left_join(Islas %>% mutate(isla = toupper(isla)), canarias_pre, by="isla")
+head(canarias_pre)
+```
+
+```{r}
+canarias_post <- left_join(Islas %>% mutate(isla = toupper(isla)), canarias_post, by="isla")
+head(canarias_post)
+```
+
+Primero graficamos el avance de las islas en casos normalizados antes de navidad haciendo uso de gganimate, ggplot2 y el mapa que nos proporciona R para observarlo de forma más agradable.
+
+```{r}
+canarias_pre %>%
+  ggplot(aes(x = long, y = lat, group = group)) +
+  geom_polygon(aes(fill = normalized)) + 
+  coord_quickmap() +
+  theme_void() +
+  transition_time(Period) +
+  ggtitle('Fecha: {frame_time}') +
+  labs(fill = "Tasa de Casos:", caption = "Fuente: INE") +
+  shadow_mark() +
+  scale_fill_gradient(low = "green", high = "red") -> mapa
+animate(mapa, nframes = 100, fps = 3)
+```
+
+Repetimos, pero ahora a partir del punto crítico.
+
+```{r}
+canarias_post %>%
+  ggplot(aes(x = long, y = lat, group = group)) +
+  geom_polygon(aes(fill = normalized)) + 
+  coord_quickmap() +
+  theme_void() +
+  transition_time(Period) +
+  ggtitle('Fecha: {frame_time}') +
+  labs(fill = "Tasa de Casos:", caption = "Fuente: INE") +
+  shadow_mark() +
+  scale_fill_gradient(low = "green", high = "red") -> mapa
+animate(mapa, nframes = 100, fps = 3)
+```
+
+Repetimos con las islas más representativas.
+
+```{r}
+canarias_pre %>%
+  filter(isla == "GRAN CANARIA") %>%
+  ggplot(aes(x = long, y = lat, group = group)) +
+  geom_polygon(aes(fill = normalized)) + 
+  coord_quickmap() +
+  theme_void() +
+  transition_time(Period) +
+  ggtitle('Fecha: {frame_time}') +
+  labs(fill = "Tasa de Casos:", caption = "Fuente: INE") +
+  shadow_mark() +
+  scale_fill_gradient(low = "green", high = "red") -> mapa
+animate(mapa, nframes = 100, fps = 3)
+```
+
+```{r}
+canarias_post %>%
+  filter(isla == "GRAN CANARIA") %>%
+  ggplot(aes(x = long, y = lat, group = group)) +
+  geom_polygon(aes(fill = normalized)) + 
+  coord_quickmap() +
+  theme_void() +
+  transition_time(Period) +
+  ggtitle('Fecha: {frame_time}') +
+  labs(fill = "Tasa de Casos:", caption = "Fuente: INE") +
+  shadow_mark() +
+  scale_fill_gradient(low = "green", high = "red") -> mapa
+animate(mapa, nframes = 100, fps = 3)
+```
+
+```{r}
+canarias_pre %>%
+  filter(isla == "TENERIFE") %>%
+  ggplot(aes(x = long, y = lat, group = group)) +
+  geom_polygon(aes(fill = normalized)) + 
+  coord_quickmap() +
+  theme_void() +
+  transition_time(Period) +
+  ggtitle('Fecha: {frame_time}') +
+  labs(fill = "Tasa de Casos:", caption = "Fuente: INE") +
+  shadow_mark() +
+  scale_fill_gradient(low = "green", high = "red") -> mapa
+animate(mapa, nframes = 100, fps = 3)
+```
+
+```{r}
+canarias_post %>%
+  filter(isla == "TENERIFE") %>%
+  ggplot(aes(x = long, y = lat, group = group)) +
+  geom_polygon(aes(fill = normalized)) + 
+  coord_quickmap() +
+  theme_void() +
+  transition_time(Period) +
+  ggtitle('Fecha: {frame_time}') +
+  labs(fill = "Tasa de Casos:", caption = "Fuente: INE") +
+  shadow_mark() +
+  scale_fill_gradient(low = "green", high = "red") -> mapa
+animate(mapa, nframes = 100, fps = 3)
+```
+
+## Historia visual
+
+Para la historia ya comentada en el informe utilizamos el siguiente código, y los primeros datos.
+
+
+En esta primera gráfica utilizamos la función de ggplot2 geom_smooth para visualizar el avance en todas las islas por casos en 2021.
+
+```{r}
+covid %>%
+  filter(fecha<"2021-12-31")  %>%
+  ggplot(aes(x=fecha, y=casos, col="darkgreen")) +
+  geom_smooth(show.legend = FALSE) +
+  scale_x_date(date_breaks = "1 month", date_labels =  "%b %Y") +
+  theme(axis.text.x=element_text(angle=20, hjust=1))
+```
+
+Mismo caso anterior, pero con 2022.
+
+```{r}
+covid %>%
+  filter(fecha>"2021-12-31")  %>%
+  ggplot(aes(x=fecha, y=casos, col="darkgreen")) +
+  geom_smooth(show.legend = FALSE) +
+  scale_x_date(date_breaks = "1 month", date_labels =  "%b %Y") +
+  theme(axis.text.x=element_text(angle=20, hjust=1))
+```
+
